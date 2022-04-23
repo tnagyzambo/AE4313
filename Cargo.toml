@@ -1,0 +1,7 @@
+[package]
+name = "ae4313"
+version = "0.1.0"
+
+[dependencies]
+kiss3d = "0.32"
+diffeq = "0.1.0"
