@@ -3,49 +3,84 @@ extern crate kiss3d;
 use diffeq::ode::{problem::OdeProblem, Ode};
 use kiss3d::camera::ArcBall;
 use kiss3d::light::Light;
-use kiss3d::nalgebra::{Point2, Point3, Translation3, UnitQuaternion, Vector3};
+use kiss3d::nalgebra::{
+    Matrix3, Matrix4, Point2, Point3, Quaternion, Translation3, UnitQuaternion, Vector3, Vector4,
+};
 use kiss3d::scene::SceneNode;
 use kiss3d::text::Font;
 use kiss3d::window::Window;
 
 fn dynamics(_: f64, v: &Vec<f64>) -> Vec<f64> {
-    let theta_1 = v[0];
-    let theta_2 = v[1];
-    let _theta_3 = v[2];
-    let d_theta_1 = v[3];
-    let d_theta_2 = v[4];
-    let d_theta_3 = v[5];
+    let omega_1 = v[0];
+    let omega_2 = v[1];
+    let omega_3 = v[2];
+    let omega = Vector3::new(omega_1, omega_2, omega_3);
 
-    let j_11 = 2500.0;
-    let j_22 = 2300.0;
-    let j_33 = 3000.0;
+    let q_0 = v[3];
+    let q_1 = v[4];
+    let q_2 = v[5];
+    let q_3 = v[6];
+    let q = Vector4::new(q_0, q_1, q_2, q_3);
 
-    let c_13 = -theta_2.sin();
-    let c_23 = theta_1.sin() * theta_2.cos();
-    let c_33 = theta_1.cos() * theta_2.sin();
+    let inertia = Matrix3::new(2500.0, 0.0, 0.0, 0.0, 2300.0, 0.0, 0.0, 0.0, 3000.0);
 
-    let n = 1.0 as f64;
+    let omega_o = 2.0 * std::f64::consts::PI / 5926.0;
 
-    // Lorenz equations
-    let dd_theta_1 = (-3.0 * n.powf(2.0) * (j_22 - j_33) * c_23 * c_33
-        + (j_22 - j_33) * d_theta_2 * d_theta_3)
-        / j_11;
-    let dd_theta_2 = (-3.0 * n.powf(2.0) * (j_33 - j_11) * c_33 * c_13
-        + (j_33 - j_11) * d_theta_3 * d_theta_1)
-        / j_22;
-    let dd_theta_3 = (-3.0 * n.powf(2.0) * (j_11 - j_22) * c_13 * c_23
-        + (j_11 - j_22) * d_theta_1 * d_theta_2)
-        / j_33;
+    let r_bo = Matrix3::new(
+        1.0 - 2.0 * (q_2.powf(2.0) + q_3.powf(2.0)),
+        2.0 * (q_1 * q_2 + q_3 * q_0),
+        2.0 * (q_1 * q_3 - q_2 * q_0),
+        2.0 * (q_2 * q_1 - q_3 * q_0),
+        1.0 - 2.0 * (q_1.powf(2.0) + q_3.powf(2.0)),
+        2.0 * (q_2 * q_3 - q_1 * q_0),
+        2.0 * (q_3 * q_1 - q_2 * q_0),
+        2.0 * (q_3 * q_2 - q_1 * q_0),
+        1.0 - 2.0 * (q_1.powf(2.0) + q_2.powf(2.0)),
+    );
 
-    // derivatives as vec
+    let omega_bo = omega - omega_o * r_bo.column(1);
+
+    let m_gg = 3.0 * omega_o.powf(2.0) * (r_bo.column(2).cross(&(inertia * r_bo.column(2))));
+
+    let m_d = Vector3::new(0.001, 0.001, 0.001);
+
+    let omega_dot = inertia.try_inverse().unwrap() * (m_gg + m_d - omega.cross(&(inertia * omega)));
+
+    let q_dot =
+        0.5 * Matrix4::new(
+            0.0,
+            omega_bo[(2, 0)],
+            -omega_bo[(1, 0)],
+            omega_bo[(0, 0)],
+            -omega_bo[(2, 0)],
+            0.0,
+            omega_bo[(0, 0)],
+            omega_bo[(1, 0)],
+            omega_bo[(1, 0)],
+            -omega_bo[(0, 0)],
+            0.0,
+            omega_bo[(2, 0)],
+            -omega_bo[(0, 0)],
+            -omega_bo[(1, 0)],
+            -omega_bo[(2, 0)],
+            0.0,
+        ) * q;
+
+    // Derivatives as vec
     vec![
-        d_theta_1, d_theta_2, d_theta_3, dd_theta_1, dd_theta_2, dd_theta_3,
+        omega_dot[(0, 0)],
+        omega_dot[(1, 0)],
+        omega_dot[(2, 0)],
+        q_dot[(0, 0)],
+        q_dot[(1, 0)],
+        q_dot[(2, 0)],
+        q_dot[(3, 0)],
     ]
 }
 
 fn main() {
     // Physics
-    let x0 = vec![0.01, 0.01, 0.0, 0.0, 0.0, 0.0];
+    let x0 = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
     let t0 = 0.0;
     let t_end = 100.0;
     let n_samples = 1000;
@@ -89,11 +124,12 @@ fn main() {
         }
 
         for step in &solution {
-            let rot = UnitQuaternion::<f32>::from_euler_angles(
-                step.1[0] as f32,
-                step.1[1] as f32,
-                step.1[2] as f32,
-            );
+            let rot = UnitQuaternion::from_quaternion(Quaternion::new(
+                step.1[3] as f32,
+                step.1[4] as f32,
+                step.1[5] as f32,
+                step.1[6] as f32,
+            ));
             satellite.set_local_rotation(rot);
             //println!("{}", satellite.data().local_rotation());
 
@@ -105,12 +141,13 @@ fn main() {
                 &Point3::new(1.0, 1.0, 1.0),
             );
 
+            let euler = rot.euler_angles();
             window.draw_text(
                 &format!(
                     "Attitude:\nRoll:  {:.2}°\nPitch: {:.2}°\nYaw:   {:.2}°",
-                    step.1[0] * 57.2958,
-                    step.1[1] * 57.2958,
-                    step.1[2] * 57.2958
+                    euler.0 * 57.2958,
+                    euler.1 * 57.2958,
+                    euler.2 * 57.2958
                 ),
                 &Point2::new(50.0, 140.0),
                 60.0,
@@ -120,10 +157,10 @@ fn main() {
 
             window.draw_text(
                 &format!(
-                    "Rates:\nRoll:  {:.2}°/s\nPitch: {:.2}°/s\nYaw:   {:.2}°/s",
-                    step.1[3] * 57.2958,
-                    step.1[4] * 57.2958,
-                    step.1[5] * 57.2958
+                    "Rates:\nRoll:  {:.4}°/s\nPitch: {:.4}°/s\nYaw:   {:.4}°/s",
+                    step.1[0] * 57.2958,
+                    step.1[1] * 57.2958,
+                    step.1[2] * 57.2958
                 ),
                 &Point2::new(50.0, 405.0),
                 60.0,
