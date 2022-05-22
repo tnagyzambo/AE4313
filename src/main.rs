@@ -1,100 +1,35 @@
-extern crate diffeq;
+extern crate csv;
 extern crate kiss3d;
-use diffeq::ode::{problem::OdeProblem, Ode};
+extern crate serde;
 use kiss3d::camera::ArcBall;
 use kiss3d::light::Light;
-use kiss3d::nalgebra::{
-    Matrix3, Matrix4, Point2, Point3, Quaternion, Translation3, UnitQuaternion, Vector3, Vector4,
-};
+use kiss3d::nalgebra::{Point2, Point3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use kiss3d::scene::SceneNode;
 use kiss3d::text::Font;
 use kiss3d::window::Window;
+use serde::Deserialize;
 
-fn dynamics(_: f64, v: &Vec<f64>) -> Vec<f64> {
-    let omega_1 = v[0];
-    let omega_2 = v[1];
-    let omega_3 = v[2];
-    let omega = Vector3::new(omega_1, omega_2, omega_3);
-
-    let q_0 = v[3];
-    let q_1 = v[4];
-    let q_2 = v[5];
-    let q_3 = v[6];
-    let q = Vector4::new(q_0, q_1, q_2, q_3);
-
-    let inertia = Matrix3::new(2500.0, 0.0, 0.0, 0.0, 2300.0, 0.0, 0.0, 0.0, 3000.0);
-
-    let omega_o = 2.0 * std::f64::consts::PI / 5926.0;
-
-    let r_bo = Matrix3::new(
-        1.0 - 2.0 * (q_2.powf(2.0) + q_3.powf(2.0)),
-        2.0 * (q_1 * q_2 + q_3 * q_0),
-        2.0 * (q_1 * q_3 - q_2 * q_0),
-        2.0 * (q_2 * q_1 - q_3 * q_0),
-        1.0 - 2.0 * (q_1.powf(2.0) + q_3.powf(2.0)),
-        2.0 * (q_2 * q_3 - q_1 * q_0),
-        2.0 * (q_3 * q_1 - q_2 * q_0),
-        2.0 * (q_3 * q_2 - q_1 * q_0),
-        1.0 - 2.0 * (q_1.powf(2.0) + q_2.powf(2.0)),
-    );
-
-    let omega_bo = omega - omega_o * r_bo.column(1);
-
-    let m_gg = 3.0 * omega_o.powf(2.0) * (r_bo.column(2).cross(&(inertia * r_bo.column(2))));
-
-    let m_d = Vector3::new(0.001, 0.001, 0.001);
-
-    let omega_dot = inertia.try_inverse().unwrap() * (m_gg + m_d - omega.cross(&(inertia * omega)));
-
-    let q_dot =
-        0.5 * Matrix4::new(
-            0.0,
-            omega_bo[(2, 0)],
-            -omega_bo[(1, 0)],
-            omega_bo[(0, 0)],
-            -omega_bo[(2, 0)],
-            0.0,
-            omega_bo[(0, 0)],
-            omega_bo[(1, 0)],
-            omega_bo[(1, 0)],
-            -omega_bo[(0, 0)],
-            0.0,
-            omega_bo[(2, 0)],
-            -omega_bo[(0, 0)],
-            -omega_bo[(1, 0)],
-            -omega_bo[(2, 0)],
-            0.0,
-        ) * q;
-
-    // Derivatives as vec
-    vec![
-        omega_dot[(0, 0)],
-        omega_dot[(1, 0)],
-        omega_dot[(2, 0)],
-        q_dot[(0, 0)],
-        q_dot[(1, 0)],
-        q_dot[(2, 0)],
-        q_dot[(3, 0)],
-    ]
+#[derive(Deserialize)]
+struct Step {
+    t: f64,
+    omega1: f64,
+    omega2: f64,
+    omega3: f64,
+    q0: f64,
+    q1: f64,
+    q2: f64,
+    q3: f64,
 }
 
-fn main() {
-    // Physics
-    let x0 = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
-    let t0 = 0.0;
-    let t_end = 100.0;
-    let n_samples = 1000;
+fn main() -> Result<(), csv::Error> {
+    // CSV
+    let mut reader = csv::Reader::from_path("output.csv")?;
+    let mut steps = Vec::<Step>::new();
 
-    let ode = Ode::Ode45;
-
-    let problem = OdeProblem::builder()
-        .tspan_linspace(t0, t_end, n_samples)
-        .fun(dynamics)
-        .init(x0)
-        .build()
-        .unwrap();
-
-    let solution = problem.solve(ode, Default::default()).unwrap().zipped();
+    for record in reader.deserialize() {
+        let step: Step = record?;
+        steps.push(step);
+    }
 
     // Setup
     let camera_pos = Point3::new(80.0, -80.0, -80.0);
@@ -123,31 +58,32 @@ fn main() {
             }
         }
 
-        for step in &solution {
-            let rot = UnitQuaternion::from_quaternion(Quaternion::new(
-                step.1[3] as f32,
-                step.1[4] as f32,
-                step.1[5] as f32,
-                step.1[6] as f32,
+        for step in &steps {
+            let rot_truth = UnitQuaternion::<f32>::from_quaternion(Quaternion::new(
+                step.q0 as f32,
+                step.q1 as f32,
+                step.q2 as f32,
+                step.q3 as f32,
             ));
-            satellite.set_local_rotation(rot);
-            //println!("{}", satellite.data().local_rotation());
+
+            let rot_truth_euler = rot_truth.euler_angles();
+
+            satellite.set_local_rotation(rot_truth);
 
             window.draw_text(
-                &format!("Time: {:.2}s", step.0),
+                &format!("Time: {:.2}s", step.t),
                 &Point2::new(50.0, 50.0),
                 60.0,
                 &font,
                 &Point3::new(1.0, 1.0, 1.0),
             );
 
-            let euler = rot.euler_angles();
             window.draw_text(
                 &format!(
                     "Attitude:\nRoll:  {:.2}°\nPitch: {:.2}°\nYaw:   {:.2}°",
-                    euler.0 * 57.2958,
-                    euler.1 * 57.2958,
-                    euler.2 * 57.2958
+                    rot_truth_euler.0 * 57.2958,
+                    rot_truth_euler.1 * 57.2958,
+                    rot_truth_euler.2 * 57.2958
                 ),
                 &Point2::new(50.0, 140.0),
                 60.0,
@@ -158,9 +94,9 @@ fn main() {
             window.draw_text(
                 &format!(
                     "Rates:\nRoll:  {:.4}°/s\nPitch: {:.4}°/s\nYaw:   {:.4}°/s",
-                    step.1[0] * 57.2958,
-                    step.1[1] * 57.2958,
-                    step.1[2] * 57.2958
+                    step.omega1 * 57.2958,
+                    step.omega2 * 57.2958,
+                    step.omega3 * 57.2958
                 ),
                 &Point2::new(50.0, 405.0),
                 60.0,
@@ -171,6 +107,8 @@ fn main() {
             window.render_with_camera(&mut camera);
         }
     }
+
+    Ok(())
 }
 
 fn create_satellite_axes(group: &mut SceneNode) {

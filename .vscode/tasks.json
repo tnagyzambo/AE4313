@@ -1,15 +1,15 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-      {
-        "label": "build",
-        "type": "shell",
-        "command": "clear && cargo build",
-      },
-      {
-        "label": "run",
-        "type": "shell",
-        "command": "clear && cargo run",
-      },
-    ]
-  }
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "clear && cargo build",
+    },
+    {
+      "label": "run",
+      "type": "shell",
+      "command": "clear && cargo run",
+    },
+  ]
+}
